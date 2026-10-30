@@ -1,0 +1,61 @@
+# AS3 lab — student compose. Pulls the prebuilt multi-arch image (amd64/arm64)
+# from Docker Hub; no local build needed.
+#
+#   docker compose pull
+#   docker compose up as3_server                 # terminal 1
+#   docker compose run --rm bob                   # terminal 2 (publish bundle first)
+#   docker compose run --rm alice                 # terminal 3 (sends first)
+#
+# Server state is in-memory: `docker compose down` is a full reset.
+# Client keys + ratchet sessions persist in the `as3state` volume, so a client
+# that exits resumes its sessions on reconnect (offline messages decrypt).
+# Reset client state: docker volume rm as3state  (or `docker compose down -v`).
+services:
+  as3_server:
+    image: s4ch1n/as3:latest
+    container_name: as3_server
+    command: ["/server"]
+    environment:
+      LISTEN: ":9000"
+    ports:
+      - "9000:9000"
+    networks: [as3net]
+
+  bob:
+    image: s4ch1n/as3:latest
+    command: ["/client"]
+    environment:
+      USER_NAME: bob
+      SERVER: as3_server:9000
+      OPK_COUNT: "5"
+      STATE_DIR: /state
+    stdin_open: true
+    tty: true
+    volumes:
+      - as3state:/state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [as3net]
+
+  alice:
+    image: s4ch1n/as3:latest
+    command: ["/client"]
+    environment:
+      USER_NAME: alice
+      SERVER: as3_server:9000
+      OPK_COUNT: "5"
+      STATE_DIR: /state
+    stdin_open: true
+    tty: true
+    volumes:
+      - as3state:/state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [as3net]
+
+networks:
+  as3net:
+    name: as3net
+
+volumes:
+  as3state:
