@@ -435,7 +435,11 @@ public:
         if (!ok) {
             fprintf(stderr, "[evil-server] %s -> %s: AEAD authentication FAILED -- cannot recover plaintext "
                             "(forwarding opaque ciphertext unchanged)\n", from.c_str(), to.c_str());
-            std::lock_guard<std::mutex> lk2(mu);
+            // NOTE: `mu` is already held by the lock_guard at the top of
+            // handleSend() -- std::mutex is non-recursive, so a second
+            // lock_guard on the same mutex in the same thread would
+            // deadlock here on every single AEAD failure. Just use the
+            // outer lock.
             mailbox[to].push_back(frame);
             Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
         }
