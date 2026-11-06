@@ -495,6 +495,7 @@ static void handleClient(int fd, MaliciousServer* server) {
     std::string line;
     try {
         while (reader.readLine(line)) {
+            fprintf(stderr, "[evil-server][debug] raw line in : %s\n", line.c_str());
             Value req = json::parse(line);
             std::string type = req.getStr("type");
             Value resp;
@@ -516,7 +517,9 @@ static void handleClient(int fd, MaliciousServer* server) {
                 resp.set("type", Value::mkStr("err"));
                 resp.set("err", Value::mkStr("unknown type"));
             }
-            net::sendLine(fd, json::dump(resp));
+            std::string respStr = json::dump(resp);
+            fprintf(stderr, "[evil-server][debug] raw line out: %s\n", respStr.c_str());
+            net::sendLine(fd, respStr);
         }
     } catch (std::exception& e) {
         fprintf(stderr, "[evil-server] connection for '%s' error: %s\n", user.c_str(), e.what());
