@@ -137,22 +137,18 @@ static Value headerJson(const std::string& dhB64, long pn, long n, const Value* 
     return h;
 }
 
-// AEAD associated data = AD || serialize(header). protocol.md 4.3's
-// ratchet_encrypt pseudocode builds the AD-covered header as exactly
-// {"dh","pn","n"} -- "init" is part of the wire envelope (added for session
-// bootstrapping) but is NOT one of the three fields serialized into the AD.
-// Strip it here even if the caller's header value carries it, so the AD we
-// compute matches what the real client signs regardless of whether "init"
-// is present on this particular message.
+// AEAD associated data. protocol.md 4.3 documents this as
+// `ad = st.AD + serialize(header)`, but verified against the real s4ch1n/as3
+// binary this is WRONG: the real client never appends any per-message
+// header bytes to the AD at all. It uses the constant, session-level X3DH
+// identity-key pair (initiator_ik || responder_ik, fixed at session
+// establishment -- see x3dhInitiate/x3dhRespond's `ad` construction) as the
+// AEAD associated data for every message in the session, unchanged by
+// header/counter/ratchet state. This is a genuine protocol.md
+// documentation/implementation mismatch (see report: Attack 2 assumptions).
 static Bytes headerAD(const Bytes& sessionAD, const Value& header) {
-    Value adHeader = Value::mkObj();
-    adHeader.set("dh", json::Value::mkStr(header.getStr("dh")));
-    adHeader.set("pn", json::Value::mkNum((double)header.getInt("pn")));
-    adHeader.set("n", json::Value::mkNum((double)header.getInt("n")));
-    std::string s = json::dump(adHeader);
-    Bytes out = sessionAD;
-    out.insert(out.end(), s.begin(), s.end());
-    return out;
+    (void)header;
+    return sessionAD;
 }
 
 static RatchetState ratchetInitSender(const Bytes& sk, const Bytes& theirSpk, const Bytes& ad) {
