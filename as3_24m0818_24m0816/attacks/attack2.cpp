@@ -342,6 +342,7 @@ public:
         fprintf(stderr, "[evil-server] %s registered\n", user.c_str());
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         return r;
     }
 
@@ -371,6 +372,7 @@ public:
                 user.c_str(), rb.opks.size());
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         r.set("count", Value::mkNum((double)rb.opks.size()));
         return r;
     }
@@ -397,6 +399,7 @@ public:
 
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("bundle"));
+        r.set("ok", Value::mkBool(true));
         r.set("bundle", bundle);
         r.set("count", Value::mkNum((double)(fi.opks.size() - fi.opkCursor)));
         return r;
@@ -422,7 +425,7 @@ public:
             if (!initBlock) {
                 fprintf(stderr, "[evil-server] %s -> %s: no session and no init block, cannot decrypt; dropping\n",
                         from.c_str(), to.c_str());
-                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
             }
             FakeIdentity& myFakeSelf = fakeIdentityFor(to); // identity we handed out as "to"
             RatchetState st = x3dhRespond(myFakeSelf, *initBlock);
@@ -437,7 +440,7 @@ public:
                             "(forwarding opaque ciphertext unchanged)\n", from.c_str(), to.c_str());
             std::lock_guard<std::mutex> lk2(mu);
             mailbox[to].push_back(frame);
-            Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+            Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
         }
 
         std::string plaintextStr(plaintext.begin(), plaintext.end());
@@ -453,7 +456,7 @@ public:
             if (rbIt == realBundles.end() || !rbIt->second.present) {
                 fprintf(stderr, "[evil-server] %s has not published a bundle yet -- cannot forge a session "
                                 "toward them; dropping message (plaintext was still recovered above)\n", to.c_str());
-                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); return r;
+                Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
             }
             FakeIdentity& myFakeAsFrom = fakeIdentityFor(from); // identity we present as "from"
             auto res = x3dhInitiate(myFakeAsFrom, rbIt->second);
@@ -474,6 +477,7 @@ public:
 
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("ok"));
+        r.set("ok", Value::mkBool(true));
         return r;
     }
 
@@ -481,6 +485,7 @@ public:
         std::lock_guard<std::mutex> lk(mu);
         Value r = Value::mkObj();
         r.set("type", Value::mkStr("frames"));
+        r.set("ok", Value::mkBool(true));
         Value arr = Value::mkArr();
         for (auto& f : mailbox[user]) arr.arr.push_back(f);
         r.set("frames", arr);
