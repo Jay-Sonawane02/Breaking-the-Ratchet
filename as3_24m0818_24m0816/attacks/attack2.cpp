@@ -347,6 +347,77 @@ public:
         return res.first->second;
     }
 
+    // Temporary diagnostic: the real client's first message of a session is
+    // failing AEAD verification against our X3DH-derived key. Recompute SK
+    // independently and brute-force several plausible AD/header hypotheses
+    // against the actual ciphertext to pin down which one the real client
+    // actually uses, instead of guessing blind from protocol.md's pseudocode.
+    void diagnoseFirstMessage(const FakeIdentity& myId, const Value& initBlock,
+                               const Value& header, const Bytes& ct) {
+        Bytes initIkDh = crypto::fromB64(initBlock.getStr("ik_dh"));
+        Bytes initEk = crypto::fromB64(initBlock.getStr("ek"));
+        long opkId = initBlock.getInt("opk_id", 0);
+
+        Bytes dh1 = crypto::x25519(myId.spk.priv, initIkDh);
+        Bytes dh2 = crypto::x25519(myId.dh.priv, initEk);
+        Bytes dh3 = crypto::x25519(myId.spk.priv, initEk);
+        Bytes ikm(32, 0xFF);
+        ikm.insert(ikm.end(), dh1.begin(), dh1.end());
+        ikm.insert(ikm.end(), dh2.begin(), dh2.end());
+        ikm.insert(ikm.end(), dh3.begin(), dh3.end());
+        if (opkId != 0) {
+            for (auto& e : myId.opks) if (e.id == opkId) {
+                Bytes dh4 = crypto::x25519(e.kp.priv, initEk);
+                ikm.insert(ikm.end(), dh4.begin(), dh4.end());
+                break;
+            }
+        }
+        Bytes salt(32, 0);
+        Bytes sk = crypto::hkdfSha256(salt, ikm, crypto::fromStr(crypto::INFO_X3DH), 32);
+
+        Bytes dhOut = crypto::x25519(myId.spk.priv, crypto::fromB64(header.getStr("dh")));
+        auto step1 = crypto::kdfRk(sk, dhOut);
+        Bytes ck = step1.ck;
+        auto chain = crypto::kdfCk(ck);
+        Bytes mk = chain.mk;
+
+        Bytes sessionAdFwd = initIkDh; sessionAdFwd.insert(sessionAdFwd.end(), myId.dh.pub.begin(), myId.dh.pub.end());
+        Bytes sessionAdRev = myId.dh.pub; sessionAdRev.insert(sessionAdRev.end(), initIkDh.begin(), initIkDh.end());
+
+        Value adHeaderNoInit = Value::mkObj();
+        adHeaderNoInit.set("dh", Value::mkStr(header.getStr("dh")));
+        adHeaderNoInit.set("pn", Value::mkNum((double)header.getInt("pn")));
+        adHeaderNoInit.set("n", Value::mkNum((double)header.getInt("n")));
+        std::string hNoInit = json::dump(adHeaderNoInit);
+        std::string hWithInit = json::dump(header);
+
+        struct Cand { const char* name; Bytes ad; };
+        std::vector<Cand> cands;
+        auto mk_ad = [](Bytes prefix, const std::string& s) { Bytes b = prefix; b.insert(b.end(), s.begin(), s.end()); return b; };
+        cands.push_back({"sessionAdFwd + {dh,pn,n}",        mk_ad(sessionAdFwd, hNoInit)});
+        cands.push_back({"sessionAdFwd + {dh,pn,n,init}",   mk_ad(sessionAdFwd, hWithInit)});
+        cands.push_back({"sessionAdRev + {dh,pn,n}",        mk_ad(sessionAdRev, hNoInit)});
+        cands.push_back({"sessionAdRev + {dh,pn,n,init}",   mk_ad(sessionAdRev, hWithInit)});
+        cands.push_back({"sessionAdFwd only",               sessionAdFwd});
+        cands.push_back({"{dh,pn,n} only",                  Bytes(hNoInit.begin(), hNoInit.end())});
+        cands.push_back({"{dh,pn,n,init} only",             Bytes(hWithInit.begin(), hWithInit.end())});
+        cands.push_back({"empty AD",                        Bytes()});
+
+        fprintf(stderr, "[evil-server][diag] trying %zu AD hypotheses against this ciphertext...\n", cands.size());
+        bool any = false;
+        for (auto& c : cands) {
+            Bytes pt;
+            bool ok = crypto::chachaDecrypt(mk, ct, c.ad, pt);
+            fprintf(stderr, "[evil-server][diag]   %-28s -> %s%s\n", c.name, ok ? "SUCCESS: " : "fail",
+                    ok ? std::string(pt.begin(), pt.end()).c_str() : "");
+            if (ok) any = true;
+        }
+        if (!any) {
+            fprintf(stderr, "[evil-server][diag] none of the AD hypotheses worked -- "
+                             "the mismatch is upstream of AD (SK/DH computation itself).\n");
+        }
+    }
+
     Value handleRegister(const std::string& user) {
         fprintf(stderr, "[evil-server] %s registered\n", user.c_str());
         Value r = Value::mkObj();
@@ -447,6 +518,9 @@ public:
         if (!ok) {
             fprintf(stderr, "[evil-server] %s -> %s: AEAD authentication FAILED -- cannot recover plaintext "
                             "(forwarding opaque ciphertext unchanged)\n", from.c_str(), to.c_str());
+            if (header->find("init")) {
+                diagnoseFirstMessage(fakeIdentityFor(to), *header->find("init"), *header, ct);
+            }
             std::lock_guard<std::mutex> lk2(mu);
             mailbox[to].push_back(frame);
             Value r = Value::mkObj(); r.set("type", Value::mkStr("ok")); r.set("ok", Value::mkBool(true)); return r;
