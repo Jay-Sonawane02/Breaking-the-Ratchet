@@ -137,10 +137,19 @@ static Value headerJson(const std::string& dhB64, long pn, long n, const Value* 
     return h;
 }
 
-// AEAD associated data = AD || serialize(header). See the ASSUMPTION note
-// at the top of this file.
+// AEAD associated data = AD || serialize(header). protocol.md 4.3's
+// ratchet_encrypt pseudocode builds the AD-covered header as exactly
+// {"dh","pn","n"} -- "init" is part of the wire envelope (added for session
+// bootstrapping) but is NOT one of the three fields serialized into the AD.
+// Strip it here even if the caller's header value carries it, so the AD we
+// compute matches what the real client signs regardless of whether "init"
+// is present on this particular message.
 static Bytes headerAD(const Bytes& sessionAD, const Value& header) {
-    std::string s = json::dump(header);
+    Value adHeader = Value::mkObj();
+    adHeader.set("dh", json::Value::mkStr(header.getStr("dh")));
+    adHeader.set("pn", json::Value::mkNum((double)header.getInt("pn")));
+    adHeader.set("n", json::Value::mkNum((double)header.getInt("n")));
+    std::string s = json::dump(adHeader);
     Bytes out = sessionAD;
     out.insert(out.end(), s.begin(), s.end());
     return out;
